@@ -22,9 +22,6 @@
   <label for="body"><b>Content</b></label>
   <div id="editor-container"></div>
 
-  <!-- Clean Content Display -->
-  <div id="clean-content"></div>
-
   <input type="submit" value="Add" class="btn">
 </form>
 
@@ -37,46 +34,44 @@
     placeholder: "Write something amazing...",
     modules: {
       toolbar: [
-        [{ header: [1, 2, 3, 4, 5, false] }],
-        ["bold", "italic", "underline", "strike"],
-        [{ color: [] }, { background: [] }],
-        [{ align: [] }],
-        ["blockquote", "code-block"],
-        [{ list: "ordered" }, { list: "bullet" }],
-        ["link", "image"],
+      [{ font: [] }],  // Font options
+      [{ size: ["small", false, "large", "huge"] }],  // Text size options
+      [{ header: [1, 2, 3, 4, 5, false] }], // Heading sizes
+      ["bold", "italic", "underline", "strike"], // Formatting options
+      [{ color: [] }, { background: [] }], // Text color & background
+      [{ align: [] }], // Text alignment
+      ["blockquote", "code-block"], // Special formatting
+      [{ list: "ordered" }, { list: "bullet" }], // Lists
+      ["link", "image"], // Media options
+      // ["clean"], // Remove formatting
+      // ["emoji"], // Emoji picker
+      // ["fullscreen"], // Fullscreen mode
+      // ["formula"], // Math formula
+      // ["video"], // Video embed
+      // ["undo", "redo"], // Undo & Redo
       ],
     },
   });
 
-  // Function to extract clean text while preserving images, links, and lists
-  function extractCleanText(html) {
-    let doc = new DOMParser().parseFromString(html, "text/html");
-    let result = "";
+  // Handle Image Upload
+  quill.getModule("toolbar").addHandler("image", function () {
+    let input = document.createElement("input");
+    input.setAttribute("type", "file");
+    input.setAttribute("accept", "image/*");
+    input.click();
 
-    doc.body.childNodes.forEach(node => {
-      if (node.nodeName === "IMG") {
-        result += `<img src="${node.src}" style="display: block; margin: auto; max-width: 100%;"> <br>`;
-      } 
-      else if (node.nodeName === "A") {
-        result += `<a href="${node.href}" target="_blank">${node.href}</a><br>`;
-      } 
-      else if (node.nodeName === "LI") {
-        result += `• ${node.textContent.trim()} <br>`;
-      } 
-      else if (node.nodeName === "BLOCKQUOTE") {
-        result += `<blockquote style="font-style: italic; color: gray;">${node.textContent.trim()}</blockquote><br>`;
-      } 
-      else if (node.nodeType === Node.TEXT_NODE || node.nodeName === "P" || node.nodeName.startsWith("H")) {
-        result += node.textContent.trim() + "<br><br>";
+    input.onchange = function () {
+      let file = input.files[0];
+      if (file) {
+        let reader = new FileReader();
+        reader.onload = function (e) {
+          let base64Image = e.target.result;
+          let range = quill.getSelection();
+          quill.insertEmbed(range.index, "image", base64Image);
+        };
+        reader.readAsDataURL(file);
       }
-    });
-
-    return result;
-  }
-
-  // Update clean content display whenever the editor content changes
-  quill.on("text-change", function() {
-    document.getElementById("clean-content").innerHTML = extractCleanText(quill.root.innerHTML);
+    };
   });
 
   document.getElementById("post-form").onsubmit = async function (event) {
@@ -84,26 +79,28 @@
 
     let title = document.getElementById("title").value.trim();
     let content = quill.root.innerHTML.trim();
-    let cleanContent = extractCleanText(content);
 
     if (!title || !content || content === "<p><br></p>") {
       alert("Title and body are required!");
       return;
     }
 
-    let response = await fetch("/add-post", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ title, body: content, textOnly: cleanContent }),
-    });
+    try {
+      let response = await fetch("/add-post", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, body: content, textOnly: quill.getText() }),
+      });
 
-    let result = await response.text();
-    alert(result);
+      let result = await response.text();
+      alert(result);
 
-    if (response.ok) {
-      window.location.href = "/dashboard";
+      if (response.ok) {
+        window.location.href = "/dashboard";
+      }
+    } catch (error) {
+      console.error("Error submitting post:", error);
+      alert("Failed to submit post. Please try again.");
     }
   };
 </script>
