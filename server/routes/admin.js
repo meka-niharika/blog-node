@@ -138,12 +138,12 @@ router.get('/add-post', authMiddleware, async (req, res) => {
 
 
 
-router.post("/add-post", authMiddleware, async (req, res) => {
+router.post("/add-post", authMiddleware, async (req, res) => { 
   try {
     let { title, body, textOnly } = req.body;
 
     console.log("Received Title:", title);
-    console.log("Received Body:", body);
+    console.log("Received Body Length:", body.length);
 
     if (!title || !body.trim()) {
       console.log("Error: Title and body are required");
@@ -153,33 +153,43 @@ router.post("/add-post", authMiddleware, async (req, res) => {
     // **Load body HTML using Cheerio**
     const $ = cheerio.load(body);
 
-    // **Find and replace Base64 images with Cloudinary URLs**
-    const imgElements = $("img").toArray();
+    // **Find all <img> elements**
+    let imgElements = $("img").toArray();
+    console.log(`Found ${imgElements.length} images in the body`);
 
-    for (let img of imgElements) {
+    // **Store image upload promises**
+    let uploadPromises = imgElements.map(async (img) => {
       let imgSrc = $(img).attr("src");
 
       if (imgSrc && imgSrc.startsWith("data:image")) {
         try {
+          // **Upload image to Cloudinary**
           const uploadedImage = await cloudinary.uploader.upload(imgSrc, {
             folder: "blog_images",
+            resource_type: "image",
+            quality: "auto:best",
+            format: "webp" // Converts to optimized WebP format
           });
 
           $(img).attr("src", uploadedImage.secure_url); // Replace with Cloudinary URL
         } catch (error) {
           console.error("Image upload failed:", error);
-          return res.status(500).send("Image upload failed");
+          throw new Error("Image upload failed");
         }
       }
-    }
+    });
+
+    // **Wait for all images to upload**
+    await Promise.all(uploadPromises);
 
     // Get cleaned-up HTML with Cloudinary URLs
     let updatedBody = $.html();
 
-    // Save the post (store both HTML and plain text)
+    // **Save the post (store both HTML and plain text)**
     const newPost = new Post({ title, body: updatedBody, textOnly });
     await newPost.save();
 
+    console.log("Post created successfully!");
     res.redirect("/dashboard");
   } catch (error) {
     console.error("Error creating post:", error);
@@ -266,6 +276,52 @@ router.put('/edit-post/:id', authMiddleware, async (req, res) => {
 
     res.status(200).json({ message: "Post updated successfully" });
     
+  } catch (error) {
+    console.error("Error updating post:", error);
+    res.status(500).send("Internal Server Error");
+  }
+});router.put("/edit-post/:id", authMiddleware, async (req, res) => {
+  try {
+    console.log("Received request body:", req.body); // Debugging log
+
+    const { title, body } = req.body;
+
+    if (!title || !body.trim()) {
+      return res.status(400).send("Title and body are required");
+    }
+
+    let updatedBody = body;
+    const imageRegex = /<img src="data:image\/(png|jpeg|jpg|gif);base64,([^"]+)"/g;
+    let matches = [...body.matchAll(imageRegex)];
+
+    // Upload all images asynchronously to Cloudinary
+    const uploadPromises = matches.map(async (match) => {
+      const imageType = match[1];
+      const imageData = match[2];
+
+      const uploadResponse = await cloudinary.uploader.upload(
+        `data:image/${imageType};base64,${imageData}`,
+        { folder: "blog_images" }
+      );
+
+      // Replace base64 data with Cloudinary URL in content
+      updatedBody = updatedBody.replace(match[0], `<img src="${uploadResponse.secure_url}"`);
+    });
+
+    await Promise.all(uploadPromises); // Wait for all images to upload
+
+    // Update post in database
+    const updatedPost = await Post.findByIdAndUpdate(
+      req.params.id,
+      { title, body: updatedBody, updatedAt: Date.now() },
+      { new: true }
+    );
+
+    if (!updatedPost) {
+      return res.status(404).send("Post not found");
+    }
+
+    res.status(200).json({ message: "Post updated successfully" });
   } catch (error) {
     console.error("Error updating post:", error);
     res.status(500).send("Internal Server Error");
